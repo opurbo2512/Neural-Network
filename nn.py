@@ -1,149 +1,249 @@
-#import library
+#import libray
 import numpy as np
-#nnfs library for work with dataset
-import nnfs
-from nnfs.datasets import spiral_data
+import math
+import random
 
-#starting the dataset
-nnfs.init()
+#Value class
+class Value:
+  
+  def __init__(self,data,_children=(),_op='',label=''):
+    self.data = data
+    self._prev = set(_children)
+    self.grad = 0.0
+    self._backward = lambda : None
+    self._op = _op
+    self.label = label
 
-#making group of neuron
-class LayerDense:
-    def __init__(self , n_inputs , n_neurons):
-        self.weights = np.random.randn(n_inputs,n_neurons)
-        self.biases = np.zeros((1,n_neurons))
+  def __repr__(self):
+    return f"Value(data={self.data})"
 
-    def forward(self,inputs):
-        self.inputs = inputs
-        self.output = np.dot(inputs,self.weights) + self.biases
+  def __add__(self,other):
+    other = other if isinstance(other,Value) else Value(other)
+    out = Value(self.data + other.data,(self,other),'+')
 
-    def backward(self,dvalues):
-        self.dweights = np.dot(self.inputs.T,dvalues)
-        self.dbiases = np.sum(dvalues,axis = 0,keepdims=True)
-        self.dinputs = np.dot(dvalues,self.weights.T)
+    def _backward():
+      self.grad += 1.0 * out.grad
+      other.grad += 1.0 * out.grad
+    out._backward = _backward
+    return out
 
-#ReLu activation function
-class Activation_Relu:
-    def forward(self,inputs):
-        self.inputs = inputs
-        self.output = np.maximum(inputs,0)
+  def __mul__(self,other):
+    other = other if isinstance(other,Value) else Value(other)
+    out = Value(self.data * other.data,(self,other),'*')
 
-    def backward(self,dvalues):
-        self.dinputs = dvalues.copy()
-        self.dinputs[self.inputs<=0] = 0
+    def _backward():
+      self.grad += other.data * out.grad
+      other.grad += self.data * out.grad
+    out._backward = _backward
+    return out
 
-#Softmax activation function
-class Activation_Softmax:
-    def forward(self,inputs):
-        exp_value = np.exp(inputs-np.max(inputs,axis=1,keepdims=True))
-        probability = exp_value/np.sum(exp_value,axis=1,keepdims=True)
-        self.output = probability
+  def __pow__(self,n):
+    assert isinstance(n,(int,float))
+    out = Value(self.data ** n,(self,),f"**{n}")
+    
+    def _backward():
+      self.grad += n * (self.data ** (n-1)) * out.grad
+    out._backward = _backward
+    return out
 
-    def backward(self,dvalues):
-        self.dinputs = np.empty_like(dvalues)
+  def __neg__(self):
+    return self * (-1)
 
-        for index,(single_output,single_dvalues) in enumerate(zip(self.output,dvalues)):
-            single_output = single_output.reshape(-1,1)
-            jabocian_matrix = np.diagflat(single_output) - np.dot(single_output,single_output.T)
-            self.dinputs[index] = np.dot(jabocian_matrix,single_dvalues)
+  def __truediv__(self,other):
+    return self * (other**-1)
 
-#making loss class
-class Loss:
-    def calculate(self,output,y):
-        sample_loss = self.forward(output,y)
-        data_loss = np.mean(sample_loss)
-        return data_loss
+  def __sub__(self,other):
+    return self + (-other)
 
-#use categorical cross entropy as loss function
-class CategoricalCrossEntropy(Loss):
-    def forward(self,y_pred,y_true):
-        samples = len(y_pred)
-        y_pred_clipped = np.clip(y_pred,1e-7,1-1e-7)
+  def __rmul__(self,other):
+    return self * other
 
-        if len(y_true.shape) == 1:
-            correct_confidence = y_pred_clipped[range(samples),y_true]
+  def __radd__(self,other):
+    return self + other
 
-        if len(y_true.shape) == 2:
-            correct_confidence = np.sum(y_pred_clipped*y_true,axis=1)
+  def tanh(self):
+    x = self.data
+    t = (math.exp(x) - math.exp(-x)) / (math.exp(x) + math.exp(-x))
+    out = Value(t,(self,),'tanh')
 
-        negative_log_likelihhod = -np.log(correct_confidence)
-        return negative_log_likelihhod
+    def _backward():
+      self.grad += out.grad * (1-t**2)
+    out._backward = _backward
+    return out
 
-    def backward(self,dvalues,y_true):
-        samples = len(dvalues)
-        labels = len(dvalues[0])
+  def relu(self):
+    t = max(0,self.data)
+    out = Value(t,(self,),'relu')
+    
+    def _backward():
+      self.grad += (self.data > 0) * out.grad
+    out._backward = _backward
+    return out
 
-        if len(y_true.shape) == 1:
-            y_true = np.eye(labels)[y_true]
+  def sigmoid(self):
+    t = 1 / (1+math.exp(-self.data))
+    out = Value(t,(self,),'sigmoid')
 
-        self.dinputs = -y_true / dvalues
-        self.dinputs = self.dinputs/samples
+    def _backward():
+      self.grad += out.grad * (t * (1-t))
+    out._backward = _backward
+    return out
 
-#combine softmax and loss function
-class Activation_Softmax_Categorical_Crossentropy:
-    def __init__(self):
-        self.activation = Activation_Softmax()
-        self.loss = CategoricalCrossEntropy()
+  def exp(self):
+    out = Value(math.exp(self.data),(self,),'exp')
 
-    def forward(self,inputs,y_true):
-        self.activation.forward(inputs)
-        self.output = self.activation.output
-        return self.loss.calculate(self.output,y_true)
+    def _backward():
+      self.grad += out.grad * math.exp(self.data)
+    out._backward = _backward
+    return out
 
-    def backward(self,dvalues,y_true):
-        samples = len(dvalues)
+  def log(self):
+    assert (self.data > 0)
+    out = Value(math.log(self.data),(self,),'log')
 
-        if len(y_true.shape) == 2:
-            y_true = np.argmax(y_true,axis = 1)
+    def _backward():
+      self.grad += out.grad * (1/self.data)
+    out._backward = _backward
+    return out
 
-        self.dinputs = dvalues.copy()
-        self.dinputs[range(samples),y_true] -= 1
-        self.dinputs = self.dinputs/samples
+  def backward(self):
+    topo = []
+    visited = set()
 
-#using SGD optimizer
-class optimizer_SGD:
-  def __init__(self,learning_rate = 1.0):
-    self.learning_rate = learning_rate
+    def build_topo(v):
+      if v not in visited:
+        visited.add(v)
+        for child in v._prev:
+          build_topo(child)
+        topo.append(v)
+    self.grad = 1.0
+    build_topo(self)
+    for node in reversed(topo):
+      node._backward()
+  
+#Module(parents of neuron,layer,mlp) class
+class Module:
 
-  def update_params(self,layer):
-    layer.weights -= self.learning_rate*layer.dweights
-    layer.biases -= self.learning_rate*layer.dbiases
+  def zero_grad(self):
+    for p in self.parameters():
+      p.grad = 0.0
 
-#making dataset
-X,y = spiral_data(samples = 100, classes= 3)
+  def step(self):
+    for p in self.parameters():
+      p.data -= p.grad * self.lr
 
-#making object from layerdense and activation function
-dense1 = LayerDense(2,3)
-activation1 = Activation_Relu()
-dense2 = LayerDense(3,3)
-activation2 = Activation_Softmax()
-loss_activation = Activation_Softmax_Categorical_Crossentropy()
-optimizer = optimizer_SGD()
+  def l2_regu(self):
+    out = [p*p for p in self.parameters()]
+    return sum(out)
 
-#looping 
-for epoch in range(1000):
-    #forward
-    dense1.forward(X)
-    activation1.forward(dense1.output)
-    dense2.forward(activation1.output)
-    loss = loss_activation.forward(dense2.output,y)
+  def l1_regu(self):
+    out = [abs(p.data) for p in self.parameters()]
+    return sum(out)
 
-    #calculating accuracy
-    predictions = np.argmax(loss_activation.output,axis = 1)
-    if len(y.shape) == 2:
-        y = np.argmax(y,axis = 1)
-    accuracy = np.mean(y == predictions)
 
-    if not epoch % 100:
-        print(f"epoch:{epoch}"+
-            f"accuracy:{accuracy:.3f}"+
-            f"loss:{loss:.3f}")
+  def parameters(self):
+    return []
 
-    #backward
-    loss_activation.backward(loss_activation.output,y)
-    dense2.backward(loss_activation.dinputs)
-    activation1.backward(dense2.dinputs)
-    dense1.backward(activation1.dinputs)
+#Neuron class
+class Neuron(Module):
 
-    optimizer.update_params(dense1)
-    optimizer.update_params(dense2)
+  def __init__(self,nin,nonlinear=True):
+    self.w = [Value(random.uniform(-1,1)) for _ in range(nin)]
+    self.b = Value(random.uniform(-1,1))
+    self.nonlinear = nonlinear
+
+  def __call__(self,x):
+    act = sum([wi * xi for wi,xi in zip(self.w,x)],self.b)
+    return act.relu() if self.nonlinear else act
+
+  def parameters(self):
+    return self.w + [self.b]
+
+  def __repr__(self):
+    return f"{'ReLU' if self.nonlinear else 'Linear'}Neuron({len(self.w)})"
+
+#Layer class
+class Layer(Module):
+
+  def __init__(self,nin,nout,nonlinear=True):
+    self.neurons = [Neuron(nin, nonlinear=nonlinear) for _ in range(nout)]
+
+  def __call__(self,x):
+    out = [n(x) for n in self.neurons]
+    return out[0] if len(out)==1 else out
+
+  def parameters(self):
+    params = []
+    for pm in self.neurons:
+      params.extend(pm.parameters())
+    return params
+
+  def __repr__(self):
+    return f"Layer of :\n[{', \n'.join(str(n) for n in self.neurons)}]"
+
+#MLP(Multi Laper Perceptron) class
+class MLP(Module):
+
+  def __init__(self,nin,nout,lr=0.01):
+    ls = [nin] + nout
+    self.lr = lr
+    self.layers = []
+    for i in range(len(nout)):
+        is_last_layer = (i == len(nout) - 1)
+        self.layers.append(Layer(ls[i], ls[i+1], nonlinear=not is_last_layer))
+
+  def __call__(self,x):
+    for layer in self.layers:
+      x = layer(x)
+    return x
+
+  def parameters(self):
+    params = []
+    for pm in self.layers:
+      params.extend(pm.parameters())
+    return params
+
+  def __repr__(self):
+    return f"Multi Layer Perceptron of :\n\n[{' ,\n\n'.join(str(l) for l in self.layers)}]"
+
+class Softmax:
+
+  def __call__(self,x):
+    exp = [i.exp() for i in x]
+    total = sum(exp)
+    prob = [i/total for i in exp]
+    return prob
+      
+class MSELoss:
+
+  def __call__(self,pred,y):
+    out = [(pred_i - y_i)**2 for pred_i,y_i in zip(pred,y)]
+    return sum(out) / len(out)
+
+class BCELoss:
+
+  def __call__(self, pred, y):
+    def loss_t(pred_t, y_t):
+      first_term = pred_t.log() * y_t
+      second_term = (-pred_t + 1).log() * (1 - y_t)
+      
+      return -(first_term + second_term)
+      
+    out = [loss_t(pred_t, y_t) for pred_t, y_t in zip(pred, y)]
+    return sum(out) / len(out)
+
+
+class CrossEntropyLoss:
+
+    def __call__(self, pred, y):
+        losses = [-pred_i[y_i].log() for pred_i, y_i in zip(pred, y)]
+        return sum(losses) / len(losses)
+
+class Accuracy:
+    def __call__(self, pred, y):
+        correct = 0
+        for pred_i, y_i in zip(pred, y):
+            pred_class = 1 if pred_i.data > 0.5 else 0
+            if pred_class == y_i:
+                correct += 1
+        return correct / len(y)
