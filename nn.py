@@ -236,7 +236,7 @@ class BCELoss:
 class CrossEntropyLoss:
 
     def __call__(self, pred, y):
-        losses = [-pred_i[y_i].log() for pred_i, y_i in zip(pred, y)]
+        losses = [(-y_i * pred_i.log()) for y_i, pred_i in zip(y, pred)]
         return sum(losses) / len(losses)
 
 class Accuracy:
