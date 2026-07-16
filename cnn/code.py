@@ -255,6 +255,29 @@ class MaxPool:
   def __repr__(self):
     return f"Max Pooling layer of {self.id} * {self.id}"
 
+#Padding Class
+class Padding:
+  
+  def __init__(self,padding_index):
+    self.pi = padding_index
+
+  def __call__(self,img):
+    r,c=len(img),len(img[0])
+    new = []
+    padding = [0 for _ in range(self.pi)]
+    up_down = [0 for _ in range(self.pi*2+c)]
+    for _ in range(self.pi):
+      new.append(up_down)
+    for row in img:
+      t = padding + row + padding
+      new.append(t)
+    for _ in range(self.pi):
+      new.append(up_down)
+    return new
+
+  def __repr__(self):
+    return f"Padding layer {self.pi} * {self.pi}"
+
 #Flatten Class
 class Flatten:
 
